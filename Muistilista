@@ -1,0 +1,116 @@
+import sqlite3
+from tkinter import *
+from tkinter import ttk, messagebox
+import ttkbootstrap
+import speech_recognition as sr
+import threading
+
+def connect_to_database():
+    connection = sqlite3.connect("notes.db")
+    cursor = connection.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, note TEXT)")
+    connection.commit()
+    return connection, cursor
+
+def close_database(connection):
+    connection.close()
+
+def add_note(connection, cursor):
+    note_text = note_entry.get()
+    if note_text != '':
+        cursor.execute("INSERT INTO notes (note) VALUES (?)", (note_text,))
+        connection.commit()
+        note_entry.delete(0, END)
+        show_notes(connection, cursor)
+        root.update_idletasks()  # Force GUI to update
+
+        # Kysy, haluaako käyttäjä asettaa hälytyksen
+        set_alarm = messagebox.askyesno("Hälytys", "Haluatko asettaa hälytyksen?")
+        if set_alarm:
+            alarm_date = DateEntry(root)
+            alarm_date.pack(padx=10, pady=10)
+            # Aseta hälytys tässä...
+    else:
+        messagebox.showinfo("Warning", "Please enter a note")
+
+def delete_note(connection, cursor):
+    selected_note = listbox.get(ANCHOR)
+    if selected_note:
+        cursor.execute("DELETE FROM notes WHERE note =?", (selected_note,))
+        connection.commit()
+        show_notes(connection, cursor)
+        root.update_idletasks()  # Force GUI to update
+    else:
+        messagebox.showinfo("Warning", "Please select a note")
+
+def show_notes(connection, cursor):
+    cursor.execute("SELECT * FROM notes")
+    rows = cursor.fetchall()
+    listbox.delete(0, END)  # Clear the listbox
+    for row in rows:
+        listbox.insert(END, row[1])
+
+def start_listening(event):
+    global listening
+    listening = True
+    threading.Thread(target=listen_note).start()
+
+def stop_listening(event):
+    global listening
+    listening = False
+
+def listen_note():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        while listening:
+            print("Puhu...")
+            audio = r.record(source, duration=2)  # Listen for 5 seconds at a time
+            try:
+                note_text = r.recognize_google(audio, language='fi-FI')  # Use Finnish
+                note_entry.insert(0, note_text)
+            except sr.UnknownValueError:
+                messagebox.showinfo("Warning", "Could not understand audio")
+            except sr.RequestError as e:
+                messagebox.showinfo("Warning", "Could not request results; {0}".format(e))
+
+connection, cursor = connect_to_database()
+
+style = ttkbootstrap.Style(theme='superhero')  # Create a ttkbootstrap Styles object with a theme
+root = style.master  # Get the master Tk window from the Styles object
+root.title("Notes")
+root.geometry("500x500")
+root.resizable(0, 0)
+
+# Labels
+note_label = ttk.Label(root, text="Muistiinpanot", font=("Arial", 15))  # Use ttk.Label
+note_label.place(x=15, y=10)
+
+# Entry
+note_entry = ttk.Entry(root, width=40, font=("Arial", 15))  # Use ttk.Entry
+note_entry.place(x=15, y=40)
+
+# Buttons
+add_button = ttk.Button(root, text="Lisää", command=lambda: add_note(connection, cursor))  # Use ttk.Button
+add_button.place(x=15, y=80)
+
+delete_button = ttk.Button(root, text="Poista", command=lambda: delete_note(connection, cursor))  # Use ttk.Button
+delete_button.place(x=100, y=80)
+
+# Add a button for speech-to-text
+listen_button = ttk.Button(root, text="Kuuntelen")
+listen_button.place(x=200, y=80)  
+listen_button.bind("<Button-1>", start_listening)
+listen_button.bind("<ButtonRelease-1>", stop_listening)
+
+# Listbox
+listbox = Listbox(root, width=40, height=10, font=("Arial", 15))
+listbox.place(x=10, y=130)
+
+# Call function
+show_notes(connection, cursor)
+
+listening = False
+
+root.mainloop()
+
+close_database(connection)
