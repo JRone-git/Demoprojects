@@ -1,0 +1,144 @@
+
+Tässä on yleiset vaiheet Flutter-sovelluksen saamiseksi puhelimeesi:
+
+1. **Asenna Flutter:** Voit ladata Flutterin sen [viralliselta verkkosivulta](https://flutter.dev/docs/get-started/install).
+
+2. **Luo uusi Flutter-projekti:** Luo uusi projekti seuraavalla komennolla:
+
+```
+flutter create my_project
+```
+
+Korvaa "my_project" haluamallasi projektin nimellä.
+
+3. **Kopioi koodi:** Kopioi sovelluksen koodi uuteen tiedostoon projektiisi. Yleensä tämä tiedosto on `lib/main.dart`.
+
+4. **Käynnistä sovellus:** Käynnistä sovellus seuraavalla komennolla:
+
+```
+flutter run
+```
+
+Tämä komento käynnistää sovelluksen kytketyssä laitteessa.
+
+
+KOODI:
+
+import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+void main() async {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  @override
+  _MyHomePageState createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  final List<String> _notes = [];
+  final TextEditingController _textController = TextEditingController();
+  Database _db;
+
+  @override
+  void initState() {
+    super.initState();
+    initDatabase();
+  }
+
+  Future<void> initDatabase() async {
+    _db = await openDatabase(
+      join(await getDatabasesPath(), 'notes.db'),
+      onCreate: (db, version) {
+        return db.execute(
+          "CREATE TABLE notes(id INTEGER PRIMARY KEY, note TEXT)",
+        );
+      },
+      version: 1,
+    );
+    updateNotes();
+  }
+
+  Future<void> updateNotes() async {
+    final List<Map<String, dynamic>> maps = await _db.query('notes');
+    setState(() {
+      _notes.clear();
+      maps.forEach((map) {
+        _notes.add(map['note']);
+      });
+    });
+  }
+
+  Future<void> _addNote() async {
+    if (_textController.text != '') {
+      await _db.insert(
+        'notes',
+        {'note': _textController.text},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      _textController.clear();
+      updateNotes();
+    }
+  }
+
+  Future<void> _deleteNote(String note) async {
+    await _db.delete(
+      'notes',
+      where: "note = ?",
+      whereArgs: [note],
+    );
+    updateNotes();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Muistiinpanot'),
+      ),
+      body: Column(
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _textController,
+              decoration: InputDecoration(
+                labelText: 'Kirjoita muistiinpano',
+              ),
+            ),
+          ),
+          RaisedButton(
+            onPressed: _addNote,
+            child: Text('Lisää muistiinpano'),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _notes.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(_notes[index]),
+                  trailing: IconButton(
+                    icon: Icon(Icons.delete),
+                    onPressed: () => _deleteNote(_notes[index]),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
