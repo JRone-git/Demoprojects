@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 import ttkbootstrap
 import speech_recognition as sr
 import threading
+from tkcalendar import DateEntry
 
 def connect_to_database():
     connection = sqlite3.connect("notes.db")
