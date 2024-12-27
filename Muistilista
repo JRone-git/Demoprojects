@@ -5,113 +5,150 @@ import ttkbootstrap
 import speech_recognition as sr
 import threading
 from tkcalendar import DateEntry
+import atexit
+from datetime import datetime
 
-def connect_to_database():
-    connection = sqlite3.connect("notes.db")
-    cursor = connection.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, note TEXT)")
-    connection.commit()
-    return connection, cursor
+class NotesApp:
+    def __init__(self):
+        # Tietokantayhteys
+        self.connection, self.cursor = self.connect_to_database()
 
-def close_database(connection):
-    connection.close()
+        # GUI
+        self.style = ttkbootstrap.Style(theme='superhero')
+        self.root = self.style.master
+        self.root.title("Muistiinpanot")
+        self.root.geometry("600x600")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-def add_note(connection, cursor):
-    note_text = note_entry.get()
-    if note_text != '':
-        cursor.execute("INSERT INTO notes (note) VALUES (?)", (note_text,))
+        # Käyttöliittymäelementit
+        self.create_widgets()
+        self.show_notes()
+
+        # Puheentunnistus
+        self.listening = False
+
+        # Lopetusvarmistus
+        atexit.register(self.close_database)
+
+    def connect_to_database(self):
+        connection = sqlite3.connect("notes.db")
+        cursor = connection.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, note TEXT, alarm_time TEXT)")
         connection.commit()
-        note_entry.delete(0, END)
-        show_notes(connection, cursor)
-        root.update_idletasks()  # Force GUI to update
+        return connection, cursor
 
-        # Kysy, haluaako käyttäjä asettaa hälytyksen
-        set_alarm = messagebox.askyesno("Hälytys", "Haluatko asettaa hälytyksen?")
-        if set_alarm:
-            alarm_date = DateEntry(root)
-            alarm_date.pack(padx=10, pady=10)
-            # Aseta hälytys tässä...
-    else:
-        messagebox.showinfo("Warning", "Please enter a note")
+    def close_database(self):
+        self.connection.close()
 
-def delete_note(connection, cursor):
-    selected_note = listbox.get(ANCHOR)
-    if selected_note:
-        cursor.execute("DELETE FROM notes WHERE note =?", (selected_note,))
-        connection.commit()
-        show_notes(connection, cursor)
-        root.update_idletasks()  # Force GUI to update
-    else:
-        messagebox.showinfo("Warning", "Please select a note")
+    def add_note(self):
+        note_text = self.note_entry.get()
+        if note_text:
+            self.cursor.execute("INSERT INTO notes (note, alarm_time) VALUES (?, ?)", (note_text, None))
+            self.connection.commit()
+            self.note_entry.delete(0, END)
+            self.show_notes()
 
-def show_notes(connection, cursor):
-    cursor.execute("SELECT * FROM notes")
-    rows = cursor.fetchall()
-    listbox.delete(0, END)  # Clear the listbox
-    for row in rows:
-        listbox.insert(END, row[1])
+            # Hälytyksen asetus
+            if messagebox.askyesno("Hälytys", "Haluatko asettaa hälytyksen?"):
+                alarm_window = Toplevel(self.root)
+                alarm_window.title("Aseta hälytys")
+                alarm_window.geometry("300x200")
+                ttk.Label(alarm_window, text="Valitse päivämäärä ja kellonaika").pack(pady=10)
+                alarm_date = DateEntry(alarm_window, width=20)
+                alarm_date.pack(pady=10)
+                alarm_time = ttk.Entry(alarm_window, width=10)
+                alarm_time.insert(0, "HH:MM")
+                alarm_time.pack(pady=10)
 
-def start_listening(event):
-    global listening
-    listening = True
-    threading.Thread(target=listen_note).start()
+                def save_alarm():
+                    try:
+                        alarm_datetime = f"{alarm_date.get()} {alarm_time.get()}"
+                        datetime.strptime(alarm_datetime, "%m/%d/%y %H:%M")
+                        self.cursor.execute("UPDATE notes SET alarm_time = ? WHERE note = ?", (alarm_datetime, note_text))
+                        self.connection.commit()
+                        alarm_window.destroy()
+                    except ValueError:
+                        messagebox.showerror("Virhe", "Virheellinen päivämäärä tai kellonaika")
 
-def stop_listening(event):
-    global listening
-    listening = False
+                ttk.Button(alarm_window, text="Tallenna", command=save_alarm).pack(pady=10)
+        else:
+            messagebox.showinfo("Varoitus", "Muistiinpano ei voi olla tyhjä")
 
-def listen_note():
-    r = sr.Recognizer()
-    with sr.Microphone() as source:
-        while listening:
-            print("Puhu...")
-            audio = r.record(source, duration=2)  # Listen for 5 seconds at a time
-            try:
-                note_text = r.recognize_google(audio, language='fi-FI')  # Use Finnish
-                note_entry.insert(0, note_text)
-            except sr.UnknownValueError:
-                messagebox.showinfo("Warning", "Could not understand audio")
-            except sr.RequestError as e:
-                messagebox.showinfo("Warning", "Could not request results; {0}".format(e))
+    def delete_note(self):
+        selected_note = self.listbox.get(ANCHOR)
+        if selected_note:
+            self.cursor.execute("DELETE FROM notes WHERE note = ?", (selected_note,))
+            self.connection.commit()
+            self.show_notes()
+        else:
+            messagebox.showinfo("Varoitus", "Valitse poistettava muistiinpano")
 
-connection, cursor = connect_to_database()
+    def show_notes(self):
+        self.cursor.execute("SELECT * FROM notes")
+        rows = self.cursor.fetchall()
+        self.listbox.delete(0, END)
+        for row in rows:
+            display_text = f"{row[1]}{' (hälytys: ' + row[2] + ')' if row[2] else ''}"
+            self.listbox.insert(END, display_text)
 
-style = ttkbootstrap.Style(theme='superhero')  # Create a ttkbootstrap Styles object with a theme
-root = style.master  # Get the master Tk window from the Styles object
-root.title("Notes")
-root.geometry("500x500")
-root.resizable(0, 0)
+    def start_listening(self, event):
+        self.listening = True
+        threading.Thread(target=self.listen_note).start()
 
-# Labels
-note_label = ttk.Label(root, text="Muistiinpanot", font=("Arial", 15))  # Use ttk.Label
-note_label.place(x=15, y=10)
+    def stop_listening(self, event):
+        self.listening = False
 
-# Entry
-note_entry = ttk.Entry(root, width=40, font=("Arial", 15))  # Use ttk.Entry
-note_entry.place(x=15, y=40)
+    def listen_note(self):
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            while self.listening:
+                try:
+                    self.status_label.config(text="Kuuntelen... Puhu!")
+                    audio = recognizer.listen(source, timeout=2, phrase_time_limit=5)
+                    note_text = recognizer.recognize_google(audio, language="fi-FI")
+                    self.note_entry.insert(END, note_text)
+                    self.status_label.config(text="Valmis")
+                except sr.UnknownValueError:
+                    self.status_label.config(text="Ei tunnistettu, yritä uudelleen")
+                except sr.RequestError as e:
+                    self.status_label.config(text=f"Virhe: {e}")
 
-# Buttons
-add_button = ttk.Button(root, text="Lisää", command=lambda: add_note(connection, cursor))  # Use ttk.Button
-add_button.place(x=15, y=80)
+    def on_close(self):
+        self.close_database()
+        self.root.destroy()
 
-delete_button = ttk.Button(root, text="Poista", command=lambda: delete_note(connection, cursor))  # Use ttk.Button
-delete_button.place(x=100, y=80)
+    def create_widgets(self):
+        # Ylätunniste
+        ttk.Label(self.root, text="Muistiinpanot", font=("Arial", 18)).pack(pady=10)
 
-# Add a button for speech-to-text
-listen_button = ttk.Button(root, text="Kuuntelen")
-listen_button.place(x=200, y=80)  
-listen_button.bind("<Button-1>", start_listening)
-listen_button.bind("<ButtonRelease-1>", stop_listening)
+        # Muistiinpanokenttä
+        self.note_entry = ttk.Entry(self.root, font=("Arial", 15))
+        self.note_entry.pack(pady=10)
 
-# Listbox
-listbox = Listbox(root, width=40, height=10, font=("Arial", 15))
-listbox.place(x=10, y=130)
+        # Painikkeet
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(pady=10)
 
-# Call function
-show_notes(connection, cursor)
+        ttk.Button(button_frame, text="Lisää", command=self.add_note).pack(side=LEFT, padx=5)
+        ttk.Button(button_frame, text="Poista", command=self.delete_note).pack(side=LEFT, padx=5)
 
-listening = False
+        listen_button = ttk.Button(button_frame, text="Kuuntele")
+        listen_button.bind("<Button-1>", self.start_listening)
+        listen_button.bind("<ButtonRelease-1>", self.stop_listening)
+        listen_button.pack(side=LEFT, padx=5)
 
-root.mainloop()
+        # Muistiinpanolista
+        self.listbox = Listbox(self.root, font=("Arial", 12), width=50, height=15)
+        self.listbox.pack(pady=10)
 
-close_database(connection)
+        # Tila
+        self.status_label = ttk.Label(self.root, text="Valmis", font=("Arial", 10), anchor="center")
+        self.status_label.pack(pady=5)
+
+    def run(self):
+        self.root.mainloop()
+
+# Käynnistys
+if __name__ == "__main__":
+    app = NotesApp()
+    app.run()
